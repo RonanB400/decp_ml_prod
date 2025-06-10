@@ -1,24 +1,25 @@
 
-📁 decp_ml_prod/
-├── 📄 setup.py          # Fichier pour installer les dépendances du projet.
-└── 📁 decp/
-    ├── 📄 __init__.py
-    ├── 📄 params.py        # Fichier de configuration pour les paramètres (chemins, hyperparamètres).
-    ├── 📄 utils.py         # Fonctions utilitaires (logs, validation des données).
-    │
+📁 decp_prod/
+├── 📄 .gitignore
+├── 📄 Dockerfile
+├── 📄 README.md
+├── 📄 requirements.txt
+├── 📄 setup.py
+├── 📄 tests
+├── 📄 api
+    └── 📄 __init__.py
+    ├── 📄 fastapi.py
+└── 📁 decp
     ├── 📁 interface/
-    │   ├── 📄 __init__.py
-    │   ├── 📄 main.py        # Point d'entrée de l'API (FastAPI) pour la prédiction.
-    │   └── 📄 main_local.py  # Interface pour tester le modèle en local.
-    │
-    ├── 📁 ml_logic/
-    │   ├── 📄 __init__.py
-    │   ├── 📄 data.py        # Charger, nettoyer et transformer les données.
-    │   ├── 📄 model.py       # Définir l'architecture du modèle.
-    │   ├── 📄 train.py       # Lancer l'entraînement du modèle.
-    │   ├── 📄 evaluate.py    # Évaluer les performances du modèle.
-    │   └── 📄 predict.py     # Effectuer des prédictions avec un modèle entraîné.
-    │
-    └── 📁 registry/
+    │   └── 📄 main.py
+    │   └── 📄 main_local.py
+    ├── 📁 models/
+    │   ├── 📄 full_pipeline.pkl
+    │   ├── 📄 hdbscan_model.pkl
+    │   ├── 📄 ...
+    │   └── 📄 cluster_profiles.csv
+    └── 📁 ml_logic
         ├── 📄 __init__.py
-        └── 📄 registry.py    # Gérer le stockage et la récupération des modèles.
+        ├── 📄 config.py
+        ├── 📄 predict.py
+        └── 📄 preprocess.py
