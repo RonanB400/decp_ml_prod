@@ -1,111 +1,223 @@
 # api/fast.py
-
-import pandas as pd
-import joblib
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import os
+import pickle
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 from decp.params import *
 
+# Initialize FastAPI
+app = FastAPI(
+    title="Procurement Clustering API",
+    description="API for clustering public procurement contracts",
+    version="1.0.0"
+)
 
-# ==============================================================================
-# 1. INITIALISATION DE L'API ET CHARGEMENT DES MODÈLES
-# ==============================================================================
+# Paths to model files
+#MODELS_DIR = "models"
+#PCA_PATH = os.path.join(MODELS_DIR, "pca_reducer.pkl")
+#HDBSCAN_PATH = os.path.join(MODELS_DIR, "hdbscan_clusterer.pkl")
+#PROFILES_PATH = os.path.join(MODELS_DIR, "cluster_profiles.pkl")
 
-# Créez une instance de l'application FastAPI
-app = FastAPI()
+# Global variables to store loaded models
+pca_model = None
+hdbscan_model = None
+cluster_profiles = None
 
-# --- Chargement des modèles au démarrage de l'API ---
-
-# Définir les chemins relatifs vers les modèles
-# Note : on part du principe que ce script est dans api/ et que models/ est au même niveau que api/
-#MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
-#PIPELINE_PATH = os.path.join(MODELS_DIR, 'full_pipeline.pkl')
-#MODEL_PATH = os.path.join(MODELS_DIR, 'hdbscan_model.pkl')
-#PROFILES_PATH = os.path.join(MODELS_DIR, 'cluster_profiles.csv')
-
-# Charger les artefacts
-try:
-    pipeline = joblib.load(PIPELINE_PATH)
-    model = joblib.load(MODEL_PATH)
-    cluster_profiles_df = pd.read_csv(PROFILES_PATH)
-    print("Modèles et profils chargés avec succès.")
-except Exception as e:
-    print(f"Erreur lors du chargement des modèles : {e}")
-    pipeline, model, cluster_profiles_df = None, None, None
-
-
-# ==============================================================================
-# 2. DÉFINITION DU MODÈLE DE DONNÉES D'ENTRÉE (PYDANTIC)
-# ==============================================================================
-
-# Ce modèle Pydantic définit la structure et les types de données
-# que l'API attendra pour une prédiction.
-# FastAPI l'utilisera pour valider les requêtes entrantes.
-class MarketContract(BaseModel):
-    # Ajoutez ici les champs qui correspondent aux colonnes
-    # attendues par votre pipeline de prétraitement.
-    # Voici quelques exemples :
+# Input data model
+class ContractData(BaseModel):
     montant: float
-    duree_mois: int
-    code_cpv_2_digits: str # ex: "45"
-    type_procedure: str # ex: "Appel d'offres ouvert"
-    # ... ajoutez les autres features nécessaires
+    dureeMois: float
+    offresRecues: Optional[int] = 1
+    procedure: str
+    nature: str
+    formePrix: Optional[str] = "FORFAIT"
+    codeCPV: Optional[str] = None
 
+# Response data model
+class ClusterResponse(BaseModel):
+    cluster_id: int
+    probability: float
+    similar_clusters: List[Dict[str, Any]]
+    cluster_profile: Dict[str, Any]
 
-# ==============================================================================
-# 3. DÉFINITION DES POINTS DE TERMINAISON (ENDPOINTS)
-# ==============================================================================
+@app.on_event("startup")
+async def load_models():
+    """Load models on startup"""
+    global pca_model, hdbscan_model, cluster_profiles
 
-# --- Endpoint Racine (GET /) ---
-# Idéal pour vérifier rapidement si l'API est en ligne.
+    try:
+        with open(PCA_PATH, "rb") as f:
+            pca_model = pickle.load(f)
+
+        with open(HDBSCAN_PATH, "rb") as f:
+            hdbscan_model = pickle.load(f)
+
+        with open(PROFILES_PATH, "rb") as f:
+            cluster_profiles = pickle.load(f)
+
+    except Exception as e:
+        print(f"Error loading models: {e}")
+        # Allow startup without models, will return error during requests
+
 @app.get("/")
 def read_root():
-    return {"status": "ok", "message": "Bienvenue sur l'API d'analyse des marchés publics"}
+    """Root endpoint to check if API is running"""
+    return {"status": "ok", "message": "Procurement Clustering API is running"}
 
+@app.get("/api/health")
+def health_check():
+    """Health check endpoint"""
+    if pca_model is None or hdbscan_model is None or cluster_profiles is None:
+        return {"status": "error", "message": "Models not loaded"}
+    return {"status": "ok", "models_loaded": True}
 
-# --- Endpoint pour obtenir le profil d'un cluster (GET /cluster_profile/{cluster_id}) ---
-@app.get("/cluster_profile/{cluster_id}")
-def get_cluster_profile(cluster_id: int):
-    if cluster_profiles_df is None:
-        return JSONResponse(status_code=500, content={"message": "Les profils de cluster ne sont pas chargés."})
+@app.get("/api/clusters")
+def get_clusters():
+    """Get available clusters and their profiles"""
+    if cluster_profiles is None:
+        raise HTTPException(status_code=500, detail="Cluster profiles not loaded")
 
-    # Chercher le profil du cluster dans le DataFrame
-    profile = cluster_profiles_df[cluster_profiles_df['cluster_id'] == cluster_id]
+    return {
+        "num_clusters": len(cluster_profiles),
+        "clusters": cluster_profiles.to_dict(orient="records")
+    }
 
-    if profile.empty:
-        return JSONResponse(status_code=404, content={"message": f"Cluster ID {cluster_id} non trouvé."})
+@app.post("/api/predict", response_model=ClusterResponse)
+def predict_cluster(contract: ContractData):
+    """Predict cluster for new contract data"""
+    if pca_model is None or hdbscan_model is None:
+        raise HTTPException(status_code=500, detail="Models not loaded")
 
-    # Convertir le profil en dictionnaire et le renvoyer
-    return profile.to_dict(orient='records')[0]
-
-
-# --- Endpoint de Prédiction (POST /predict) ---
-@app.post("/predict")
-def predict_cluster(contract: MarketContract):
-    if pipeline is None or model is None:
-        return JSONResponse(status_code=500, content={"message": "Les modèles ne sont pas chargés."})
-
-    # 1. Convertir les données d'entrée en DataFrame pandas
-    # Le pipeline s'attend à recevoir un DataFrame
-    input_df = pd.DataFrame([contract.model_dump()])
-
-    # 2. Prétraiter les données avec le pipeline
-    # Le pipeline va gérer l'encodage, la normalisation, la PCA, et l'UMAP
-    transformed_data = pipeline.transform(input_df)
-
-    # 3. Prédire le cluster avec HDBSCAN
-    # NOTE : HDBSCAN prédit sur de nouvelles données avec la méthode `approximate_predict`
-    # qui prend en entrée les données transformées par le réducteur de dimension (UMAP dans votre cas).
-    # Votre `full_pipeline.pkl` devrait donc renvoyer ces données prêtes pour la prédiction.
     try:
-        # La méthode exacte dépend de comment vous avez sauvegardé votre modèle.
-        # hdbscan.approximate_predict est la méthode standard pour les nouveaux points.
-        cluster_label, _ = model.approximate_predict(transformed_data)
-        predicted_cluster = int(cluster_label[0])
-    except Exception as e:
-         return JSONResponse(status_code=500, content={"message": f"Erreur lors de la prédiction : {e}"})
+        # Process input data
+        features = preprocess_input(contract)
 
-    # 4. Renvoyer la prédiction
-    return {"predicted_cluster": predicted_cluster}
+        # Transform with PCA
+        pca_features = pca_model.transform(features.reshape(1, -1))
+
+        # Predict with HDBSCAN
+        cluster_labels, probabilities = hdbscan.approximate_predict(hdbscan_model, pca_features)
+        cluster_id = int(cluster_labels[0])
+        probability = float(probabilities[0])
+
+        # If assigned to noise, find nearest cluster
+        if cluster_id == -1:
+            distances = [np.min(np.linalg.norm(pca_features - hdbscan_model.exemplars_[c], axis=1))
+                       for c in range(len(hdbscan_model.exemplars_))]
+            cluster_id = int(np.argmin(distances))
+            probability = 0.0
+
+        # Get cluster profile
+        profile = cluster_profiles[cluster_profiles['cluster_id'] == cluster_id].to_dict(orient="records")
+
+        # Find similar clusters
+        similar = find_similar_clusters(contract.dict(), cluster_profiles, top_n=3)
+
+        return {
+            "cluster_id": cluster_id,
+            "probability": probability,
+            "similar_clusters": similar,
+            "cluster_profile": profile[0] if profile else {}
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+
+def preprocess_input(contract_data: ContractData):
+    """Preprocess input contract data to match model requirements"""
+    # Get dictionary representation
+    data = contract_data.dict()
+
+    # Create feature vector (match order used during training)
+    numeric_features = np.array([
+        data['montant'],
+        data['dureeMois'],
+        data.get('offresRecues', 1)
+    ])
+
+    # Encode categorical features (must match training encoding)
+    # This is simplified; in production you'd use the same encoder as training
+    categorical_features = []
+
+    # Add procedure one-hot encoding
+    if data['procedure'] == 'PROCEDURE_ADAPTEE':
+        categorical_features.extend([1, 0, 0])
+    elif data['procedure'] == 'PROCEDURE_FORMALISEE':
+        categorical_features.extend([0, 1, 0])
+    else:
+        categorical_features.extend([0, 0, 1])
+
+    # Add nature one-hot encoding
+    if data['nature'] == 'SERVICES':
+        categorical_features.extend([1, 0, 0])
+    elif data['nature'] == 'TRAVAUX':
+        categorical_features.extend([0, 1, 0])
+    else:
+        categorical_features.extend([0, 0, 1])
+
+    # Add formePrix one-hot encoding
+    if data.get('formePrix') == 'PRIX_REVISABLES':
+        categorical_features.append(1)
+    else:
+        categorical_features.append(0)
+
+    # Combine features
+    all_features = np.concatenate([numeric_features, categorical_features])
+
+    return all_features
+
+def find_similar_clusters(contract_data, profiles_df, top_n=3):
+    """Find clusters similar to the input contract"""
+    # Extract key metrics
+    contract_dict = {
+        'amount': contract_data['montant'],
+        'duration': contract_data['dureeMois'],
+    }
+
+    if 'codeCPV' in contract_data and contract_data['codeCPV']:
+        contract_dict['cpv'] = contract_data['codeCPV']
+
+    # Score each cluster
+    scores = []
+
+    for _, profile in profiles_df.iterrows():
+        score = 0
+        weight_sum = 0
+
+        # Compare CPV codes if available
+        if 'top_cpv' in profile and 'cpv' in contract_dict:
+            if profile['top_cpv'] == contract_dict['cpv']:
+                score += 3  # High weight for matching CPV
+            weight_sum += 3
+
+        # Compare contract amount
+        if 'median_amount' in profile and 'amount' in contract_dict:
+            amount_ratio = min(profile['median_amount'], contract_dict['amount']) / max(profile['median_amount'], contract_dict['amount'])
+            score += amount_ratio * 2  # Weight of 2 for amount similarity
+            weight_sum += 2
+
+        # Compare duration
+        if 'median_duration' in profile and 'duration' in contract_dict:
+            if profile['median_duration'] > 0 and contract_dict['duration'] > 0:
+                duration_ratio = min(profile['median_duration'], contract_dict['duration']) / max(profile['median_duration'], contract_dict['duration'])
+                score += duration_ratio * 1  # Weight of 1 for duration similarity
+                weight_sum += 1
+
+        # Normalize score
+        normalized_score = score / weight_sum if weight_sum > 0 else 0
+        scores.append(normalized_score)
+
+    # Create a copy with scores
+    profiles = profiles_df.copy()
+    profiles['similarity_score'] = scores
+
+    # Return top similar clusters
+    similar = profiles.sort_values('similarity_score', ascending=False).head(top_n)
+    return similar.to_dict(orient="records")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
