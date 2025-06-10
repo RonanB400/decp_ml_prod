@@ -8,25 +8,18 @@
 │
 ├── 📁 api/
 │   ├── 📄 __init__.py
-│   └── 📄 fastapi.py
+│   ├── 📄 fast.py            # FastAPI application
+│   ├── 📄 preprocessing.py   # Preprocessing utilities
+│   └── 📄 prediction.py      # Prediction utilities
 │
 ├── 📁 decp/
 │   ├── 📄 __init__.py
-│   ├── 📁 interface/
-│   │   ├── 📄 __init__.py
-│   │   ├── 📄 main.py
-│   │   └── 📄 main_local.py
-│   └── 📁 ml_logic/
-│       ├── 📄 __init__.py
-│       ├── 📄 config.py
-│       ├── 📄 predict.py
-│       └── 📄 preprocess.py
+│   └── 📄 params.py         # Configuration parameters
 │
 ├── 📁 models/
-│   ├── 📄 cluster_profiles.csv
-│   ├── 📄 full_pipeline.pkl
-│   ├── 📄 hdbscan_model.pkl
-│   └── 📄 ...
+│   ├── 📄 .gitkeep          # To keep the directory in git
+│   ├── 📄 README.md         # Instructions for model files
 │
-└── 📁 tests/
-    └── 📄 ...
+├── 📁 tests/
+│   ├── 📄 __init__.py
+│   └── 📄 test_api.py       # Tests for the API
