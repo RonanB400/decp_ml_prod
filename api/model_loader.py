@@ -38,6 +38,13 @@ def load_models(model_dir="models"):
         try:
             with open(models_path / "hdbscan_clusterer.pkl", "rb") as f:
                 hdbscan_model = pickle.load(f)
+                # Check if prediction data exists (should be there from saved model)
+                if hasattr(hdbscan_model, 'prediction_data_') and hdbscan_model.prediction_data_ is not None:
+                    print("HDBSCAN model loaded with existing prediction data")
+                else:
+                    # Only generate if somehow missing
+                    print("Warning: Prediction data missing, generating now...")
+                    hdbscan_model.generate_prediction_data()
                 print("HDBSCAN model loaded successfully")
         except (FileNotFoundError, pickle.PickleError) as e:
             print(f"Error loading HDBSCAN model: {e}")
