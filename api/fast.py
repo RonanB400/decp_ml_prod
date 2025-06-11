@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from api.preprocessing import preprocess_input
 from api.prediction import find_similar_clusters
 from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
+from decp_amount.amount_query import amount_prediction
 
 # Initialize FastAPI
 app = FastAPI(
@@ -150,3 +151,25 @@ def predict_cluster(contract: ContractData, models=Depends(get_models)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api.fast:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+class AmountRequest(BaseModel):
+    """Input data for amount prediction"""
+    data: dict
+
+class AmountResponse(BaseModel):
+    """Response for amount prediction"""
+    prediction: list
+
+@app.post("/api/montant", response_model=AmountResponse)
+def predict_amount(request: AmountRequest):
+    """
+    Predict contract amount using the ML model.
+    """
+    try:
+        X = pd.DataFrame([request.data])
+        y_pred = amount_prediction(X)
+        return {"prediction": y_pred.tolist()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Montant prediction error: {str(e)}")
