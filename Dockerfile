@@ -1,4 +1,4 @@
-# Use Python 3.10 as base image
+# Use Python 3.10.6 as base image
 FROM python:3.10.6-buster
 
 # Set working directory in the container
@@ -18,8 +18,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code and models
 COPY api/ ./api/
-COPY main.py .
+COPY decp_amount/ ./decp_amount/
+COPY decp_rag/ ./decp_rag/
 COPY models/ ./models/
+COPY scripts/ ./scripts/
+
+COPY main.py .
+COPY config.py .
+COPY config.yaml .
 
 
 # Default environment variables

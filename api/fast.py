@@ -3,6 +3,7 @@ import datetime
 import hdbscan
 import numpy as np
 import pandas as pd
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -37,6 +38,35 @@ try:
 except Exception as e:
     print(f"Warning: RAG system initialization failed: {e}")
     rag_system = None
+
+# Load CPV descriptions
+cpv_descriptions = {}
+try:
+    cpv_desc_path = "models/cpv_descriptions.csv"
+    if os.path.exists(cpv_desc_path):
+        cpv_df = pd.read_csv(cpv_desc_path)
+        cpv_descriptions = dict(zip(cpv_df["codeCPV_2"].astype(int), cpv_df["codeCPV_FR"]))
+        print(f"Loaded {len(cpv_descriptions)} CPV descriptions")
+    else:
+        print(f"CPV descriptions file not found: {cpv_desc_path}")
+except Exception as e:
+    print(f"Error loading CPV descriptions: {str(e)}")
+
+def get_cpv_description(cpv_code):
+    """Get human-readable French description for a CPV code"""
+    try:
+        # Extract first two digits for category
+        if cpv_code is None:
+            return "Catégorie inconnue"
+
+        category_code = int(str(cpv_code)[:2])
+
+        if category_code in cpv_descriptions:
+            return cpv_descriptions[category_code]
+        else:
+            return f"Services avec code CPV {cpv_code}"
+    except (ValueError, TypeError):
+        return "Catégorie inconnue"
 
 # Input data model
 class Contract(BaseModel):
@@ -74,6 +104,94 @@ def get_clusters():
     return {
         "num_clusters": len(cluster_profiles),
         "clusters": cluster_profiles.to_dict(orient="records")
+    }
+
+@app.get("/api/clusters/top")
+def get_top_clusters(n: int = 10):
+    """
+    Get the top N biggest clusters by size
+
+    Parameters:
+    - n: Number of top clusters to return (default: 10)
+    """
+    if cluster_profiles is None or len(cluster_profiles) == 0:
+        raise HTTPException(status_code=404, detail="No cluster profiles available")
+
+    # Sort clusters by size in descending order and take top n
+    top_clusters = cluster_profiles.sort_values(by="size", ascending=False).head(n)
+
+    return {
+        "num_clusters": len(top_clusters),
+        "clusters": top_clusters.to_dict(orient="records")
+    }
+
+@app.get("/api/clusters/insights")
+def get_cluster_insights(n: int = 10):
+    """
+    Get human-readable insights for the top N clusters
+
+    Parameters:
+    - n: Number of top clusters to return insights for (default: 10)
+    """
+    if cluster_profiles is None or len(cluster_profiles) == 0:
+        raise HTTPException(status_code=404, detail="No cluster profiles available")
+
+    # Get top n clusters by size
+    top_clusters = cluster_profiles.sort_values(by="size", ascending=False).head(n)
+
+    insights = []
+
+    for _, cluster in top_clusters.iterrows():
+        # Format large numbers with commas
+        size = f"{int(cluster['size']):,}"
+        median_amount = f"{cluster['median_amount']:,.2f}€"
+        median_duration = f"{cluster['median_duration']:.1f}"
+
+        # Get CPV category description
+        cpv_code = cluster.get('top_cpv')
+        cpv_description = get_cpv_description(cpv_code)
+        cpv_percentage = f"{cluster.get('top_cpv_pct', 0) * 100:.1f}%"
+
+        # Create a human-readable description
+        description = (
+            f"Le cluster {int(cluster['cluster_id'])} représente {size} marchés "
+            f"principalement pour '{cpv_description}' ({cpv_percentage} des marchés). "
+            f"Les contrats types ont une valeur médiane de {median_amount} "
+            f"et durent {median_duration} mois. "
+        )
+
+        # Add information about contract procedure if available
+        if 'top_procedure' in cluster and 'top_procedure_pct' in cluster:
+            procedure = cluster['top_procedure']
+            proc_pct = f"{cluster['top_procedure_pct'] * 100:.1f}%"
+            description += f"La plupart des marchés ({proc_pct}) utilisent la procédure '{procedure}'. "
+
+        # Add information about price structure if available
+        if 'top_forme_prix' in cluster and 'top_forme_prix_pct' in cluster:
+            price_form = cluster['top_forme_prix']
+            price_pct = f"{cluster['top_forme_prix_pct'] * 100:.1f}%"
+            description += f"{price_pct} utilisent le format de prix '{price_form}'. "
+
+        insights.append({
+            "cluster_id": int(cluster['cluster_id']),
+            "size": int(cluster['size']),
+            "main_category": cpv_description,
+            "median_value": float(cluster['median_amount']),
+            "median_duration": float(cluster['median_duration']),
+            "description": description,
+            "stats": {
+                "mean_amount": float(cluster.get('mean_amount', 0)),
+                "median_amount": float(cluster.get('median_amount', 0)),
+                "min_amount": float(cluster.get('min_amount', 0)),
+                "max_amount": float(cluster.get('max_amount', 0)),
+                "mean_duration": float(cluster.get('mean_duration', 0)),
+                "median_duration": float(cluster.get('median_duration', 0)),
+            }
+        })
+
+    return {
+        "num_clusters": len(insights),
+        "insights": insights
     }
 
 @app.post("/api/predict")
