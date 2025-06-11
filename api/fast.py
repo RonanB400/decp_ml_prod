@@ -10,7 +10,7 @@ from typing import Optional
 # Import the model loader
 from api.model_loader import load_models
 # Import the RAG system
-from decp_rag.rag_query import RAGQuerySystem
+from decp_rag.rag_bigquery import RAGQuerySystem
 
 # Import the find_similar_clusters function
 from api.prediction import find_similar_clusters
