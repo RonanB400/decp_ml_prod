@@ -1,6 +1,4 @@
 # api/fast.py
-import os
-import pickle
 import hdbscan
 import numpy as np
 import pandas as pd
@@ -10,6 +8,9 @@ from typing import List, Dict, Any, Optional
 
 # Import the model loader
 from api.model_loader import load_models
+
+# Import the find_similar_clusters function
+from api.prediction import find_similar_clusters
 
 # Initialize FastAPI
 app = FastAPI(
@@ -107,24 +108,24 @@ def predict_cluster(contract: Contract):
                 "probability": 0.0,
                 "is_noise": True
             }
+            similar_clusters = []
         else:
             # Get cluster profile
             cluster_profile = cluster_profiles[cluster_profiles['cluster_id'] == predicted_cluster]
 
-            # Find similar clusters (same top CPV code)
-            if len(cluster_profile) > 0 and 'top_cpv' in cluster_profile.columns:
-                top_cpv = cluster_profile.iloc[0]['top_cpv']
-                similar_clusters = cluster_profiles[cluster_profiles['top_cpv'] == top_cpv]
-                similar_clusters = similar_clusters[similar_clusters['cluster_id'] != predicted_cluster]
-            else:
-                similar_clusters = pd.DataFrame()
+            # Find similar clusters based on contract data
+            similar_clusters = find_similar_clusters(
+                contract_data=contract.dict(),
+                profiles_df=cluster_profiles[cluster_profiles['cluster_id'] != predicted_cluster],
+                top_n=5  # Adjust number as needed
+            )
 
             response = {
                 "cluster_id": predicted_cluster,
                 "probability": prob,
                 "is_noise": False,
                 "cluster_profile": cluster_profile.to_dict(orient="records")[0] if len(cluster_profile) > 0 else {},
-                "similar_clusters": similar_clusters.to_dict(orient="records")
+                "similar_clusters": similar_clusters
             }
 
         return response
