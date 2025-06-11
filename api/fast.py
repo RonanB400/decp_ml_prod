@@ -1,27 +1,43 @@
 # api/fast.py
+import datetime
 import hdbscan
 import numpy as np
 import pandas as pd
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import Optional
 
 # Import the model loader
 from api.model_loader import load_models
+# Import the RAG system
+from decp_rag.rag_query import RAGQuerySystem
 
 # Import the find_similar_clusters function
 from api.prediction import find_similar_clusters
 
+#from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
+from decp_amount.amount_query import amount_prediction
+
+
 # Initialize FastAPI
 app = FastAPI(
-    title="DECP Clustering API",
+    title="Lanterne publique",
     description="API Lanterne publique : etudes des marchés publics",
     version="1.0.0"
 )
 
 # Load models at startup
-pca_model, hdbscan_model, preprocessing_pipeline, cluster_profiles = load_models()
+models = load_models()
+# pca_model, hdbscan_model, preprocessing_pipeline, cluster_profiles = models
+pca_model, hdbscan_model, cluster_pipeline, cluster_profiles, amount_pipeline, amount_model = models
+
+# Initialize RAG system at startup
+try:
+    rag_system = RAGQuerySystem()
+except Exception as e:
+    print(f"Warning: RAG system initialization failed: {e}")
+    rag_system = None
 
 # Load CPV descriptions
 cpv_descriptions = {}
@@ -69,6 +85,10 @@ class Contract(BaseModel):
     typeGroupementOperateurs: Optional[str] = None
     tauxAvance: Optional[float] = 0.0
     codeCPV_2_3: Optional[int] = None
+
+class RAGQuestion(BaseModel):
+    """Model for RAG question input"""
+    question: str
 
 @app.get("/")
 def read_root():
@@ -182,7 +202,7 @@ def predict_cluster(contract: Contract):
     Returns cluster ID, probability, and similar clusters
     """
     # Check if models are loaded
-    if pca_model is None or hdbscan_model is None or preprocessing_pipeline is None:
+    if pca_model is None or hdbscan_model is None or cluster_pipeline is None:
         raise HTTPException(status_code=500, detail="Models not loaded")
 
     # Convert contract to DataFrame for preprocessing
@@ -203,7 +223,7 @@ def predict_cluster(contract: Contract):
 
     try:
         # Preprocess the input
-        contract_preprocessed = preprocessing_pipeline.transform(contract_df)
+        contract_preprocessed = cluster_pipeline.transform(contract_df)
 
         # Apply PCA
         contract_pca = pca_model.transform(contract_preprocessed)
@@ -253,6 +273,117 @@ def predict_cluster(contract: Contract):
         print(f"Error during prediction: {str(e)}")
         print(traceback.format_exc())  # Print the full traceback
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+
+
+
+
+class AmountRequest(BaseModel):
+    """Input data for amount prediction"""
+    dureeMois: int
+    offresRecues: Optional[int] = 5
+    annee: Optional[int] = datetime.datetime.now().year
+    procedure: str
+    nature: str
+    formePrix: str
+    ccag: Optional[str] = "Pas de CCAG"
+    sousTraitanceDeclaree: Optional[float] = 0.0
+    origineFrance: Optional[float] = 0.0
+    marcheInnovant: Optional[float] = 0.0
+    idAccordCadre: Optional[int] = 0
+    typeGroupementOperateurs: Optional[str] = None
+    tauxAvance: Optional[float] = 0.0
+    codeCPV_3: Optional[int] = None
+    acheteur_tranche_effectif: str
+    acheteur_categorie: str
+
+class AmountResponse(BaseModel):
+    """Response for amount prediction"""
+    prediction: list
+
+@app.post("/api/montant", response_model=AmountResponse)
+def predict_amount(request: AmountRequest):
+    """
+    Predict contract amount using the ML model.
+    """
+    # Check if models are loaded
+    if amount_pipeline is None or amount_model is None:
+        raise HTTPException(status_code=500, detail="Amount models not loaded")
+    
+    try:
+        # Convert request to DataFrame
+        X = pd.DataFrame([request.dict()])
+        
+        # Fix column naming and missing columns to match pipeline expectations
+        # Add 'annee' column if missing (use the annee from request or current year)
+        if 'annee' not in X.columns:
+            X['annee'] = request.annee if hasattr(request, 'annee') and request.annee else datetime.datetime.now().year
+        
+        # Convert tauxAvance to tauxAvance_cat if needed
+        if 'tauxAvance' in X.columns and 'tauxAvance_cat' not in X.columns:
+            # Map numeric tauxAvance to categorical tauxAvance_cat
+            def map_taux_to_cat(val):
+                if pd.isna(val) or val == 0:
+                    return "0%"
+                elif val <= 5:
+                    return "5%"
+                elif val <= 10:
+                    return "10%"
+                elif val <= 15:
+                    return "15%"
+                elif val <= 20:
+                    return "20%"
+                elif val <= 25:
+                    return "25%"
+                else:
+                    return "30%"
+            
+            X['tauxAvance_cat'] = X['tauxAvance'].apply(map_taux_to_cat)
+        
+        # Convert numeric columns to float64 to match training data dtype
+        numeric_cols = ['dureeMois', 'offresRecues', 'annee', 'sousTraitanceDeclaree', 
+                       'origineFrance', 'marcheInnovant', 'tauxAvance', 'codeCPV_3', 'idAccordCadre']
+        for col in numeric_cols:
+            if col in X.columns:
+                X[col] = X[col].astype('float64')
+        
+        y_pred = amount_prediction(X, amount_pipeline, amount_model)
+        return {"prediction": y_pred.tolist()}
+    except Exception as e:
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Montant prediction error: {str(e)}")
+
+
+
+@app.post("/api/rag")
+def rag_query(question: RAGQuestion):
+    """
+    Query the RAG system with a natural language question
+    
+    Returns the natural language answer
+    """
+    # Check if RAG system is loaded
+    if rag_system is None:
+        raise HTTPException(
+            status_code=500, 
+            detail="RAG system not initialized"
+        )
+    
+    try:
+        # Query the RAG system - this returns just the answer string
+        answer = rag_system.query(question.question)
+        
+        return {"answer": answer}
+    
+    except Exception as e:
+        import traceback
+        print(f"Error during RAG query: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"RAG query error: {str(e)}"
+        )
+
 
 if __name__ == "__main__":
     import uvicorn
