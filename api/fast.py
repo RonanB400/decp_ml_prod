@@ -148,9 +148,6 @@ def predict_cluster(contract: ContractData, models=Depends(get_models)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api.fast:app", host="0.0.0.0", port=8000, reload=True)
 
 
 
@@ -173,3 +170,10 @@ def predict_amount(request: AmountRequest):
         return {"prediction": y_pred.tolist()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Montant prediction error: {str(e)}")
+
+
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api.fast:app", host="0.0.0.0", port=8000, reload=True)
