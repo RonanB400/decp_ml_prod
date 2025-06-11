@@ -14,6 +14,10 @@ from decp_rag.rag_query import RAGQuerySystem
 # Import the find_similar_clusters function
 from api.prediction import find_similar_clusters
 
+from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
+from decp_amount.amount_query import amount_prediction
+
+
 # Initialize FastAPI
 app = FastAPI(
     title="DECP Clustering API",
@@ -150,6 +154,33 @@ def predict_cluster(contract: Contract):
         print(traceback.format_exc())  # Print the full traceback
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
+
+
+
+
+class AmountRequest(BaseModel):
+    """Input data for amount prediction"""
+    data: dict
+
+class AmountResponse(BaseModel):
+    """Response for amount prediction"""
+    prediction: list
+
+@app.post("/api/montant", response_model=AmountResponse)
+def predict_amount(request: AmountRequest):
+    """
+    Predict contract amount using the ML model.
+    """
+    try:
+        X = pd.DataFrame([request.data])
+        y_pred = amount_prediction(X)
+        return {"prediction": y_pred.tolist()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Montant prediction error: {str(e)}")
+
+
+
+
 @app.post("/api/rag")
 def rag_query(question: RAGQuestion):
     """
@@ -178,6 +209,7 @@ def rag_query(question: RAGQuestion):
             status_code=500,
             detail=f"RAG query error: {str(e)}"
         )
+
 
 if __name__ == "__main__":
     import uvicorn
