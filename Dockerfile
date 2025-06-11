@@ -1,23 +1,32 @@
-FROM python:3.9-slim
+# Use Python 3.10 as base image
+FROM python:3.10.6-buster
 
+# Set working directory in the container
 WORKDIR /app
 
-# Install dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements file
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy the application code and models
+COPY api/ ./api/
+COPY main.py .
+COPY models/ ./models/
 
-# Create a non-root user
-RUN adduser --disabled-password --gecos '' api-user
-USER api-user
 
-# Define where the models should be mounted
-ENV MODELS_DIR=/app/models
+# Default environment variables
+ENV PORT=8000
 
-# Expose API port
+# Expose the port
 EXPOSE 8000
 
-# Start the API service
-CMD ["uvicorn", "api.fast:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application
+CMD ["python", "main.py"]
