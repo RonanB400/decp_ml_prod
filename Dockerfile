@@ -1,5 +1,5 @@
 # Use Python 3.10 as base image
-FROM python:3.10-slim
+FROM python:3.10.6-buster
 
 # Set working directory in the container
 WORKDIR /app
@@ -17,10 +17,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code and models
-COPY . .
+COPY api/ ./api/
+COPY main.py .
+COPY models/ ./models/
 
-# Make sure the models directory exists
-RUN mkdir -p models
 
 # Default environment variables
 ENV PORT=8000
