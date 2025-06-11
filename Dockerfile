@@ -16,13 +16,17 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy scripts directory with all original Python files
-COPY scripts/ ./scripts/
-
 # Copy the application code and models
 COPY api/ ./api/
-COPY main.py .
+COPY decp_amount/ ./decp_amount/
+COPY decp_rag/ ./decp_rag/
 COPY models/ ./models/
+COPY scripts/ ./scripts/
+
+COPY main.py .
+COPY config.py .
+COPY config.yaml .
+
 
 # Default environment variables
 ENV PORT=8000
