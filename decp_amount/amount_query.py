@@ -1,36 +1,28 @@
-import os
-import pickle
+def amount_prediction(X, amount_pipeline, amount_model):
+    """
+    Predict amount using preprocessed data and trained models
+    
+    Args:
+        X: Input data to predict
+        amount_pipeline: Preprocessing pipeline for amount prediction
+        amount_model: Trained Keras model for amount prediction
+    
+    Returns:
+        y: Predicted probabilities for price ranges
+    """
+    try:
+        # Preprocessing of the market data
+        X_preproc = amount_pipeline.transform(X)
+        
+        # Prediction of price range probabilities
+        y = amount_model.predict(X_preproc)
 
-from keras.models import load_model
-
-# Charger le pipeline depuis un fichier .pkl
-with open('../models/pipeline_pred_montant.pkl', 'rb') as f:
-    pipeline = pickle.load(f)
-
-def amount_prediction(X):
-    #preprocessing du marché
-    X_preproc = pipeline.transform(X)
-    #chargement du model de prediction du montant
-    model = load_model(os.path.join('..','models','model_montant_100.keras'))
-    #prediction des probabilités de fourchettes de prix
-    y = model.predict(X_preproc)
-
-    return y
+        return y
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in amount_prediction: {str(e)}")
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise
 
 
-# # ...existing code...
-
-# if __name__ == "__main__":
-#     # Exemple d'utilisation pour tester le script
-#     import pandas as pd
-
-#     # Remplacer par un DataFrame de test adapté à votre pipeline
-#     X_test = pd.DataFrame([{
-#         # 'col1': value1,
-#         # 'col2': value2,
-#         # ...
-#     }])
-
-#     y_pred = amount_prediction(X_test)
-#     print("Prédiction :", y_pred)
-# # ...existing code...
