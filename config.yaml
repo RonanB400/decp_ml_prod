@@ -1,0 +1,5 @@
+generation:
+  temperature: 0.0
+  max_tokens: 20000
+  #llm_model_name: "mistral-large-latest"
+  llm_model_name: "ministral-8b-latest"
