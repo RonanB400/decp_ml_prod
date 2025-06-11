@@ -14,7 +14,7 @@ from decp_rag.rag_query import RAGQuerySystem
 # Import the find_similar_clusters function
 from api.prediction import find_similar_clusters
 
-from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
+#from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
 from decp_amount.amount_query import amount_prediction
 
 
