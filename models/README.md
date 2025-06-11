@@ -1,16 +1,13 @@
-# Pre-trained Models
+# DECP Clustering API
 
-This directory should contain the following pre-trained model files:
+API for clustering public procurement contracts based on HDBSCAN.
 
-- `pca_model.pkl`: PCA dimensionality reduction model
-- `hdbscan_model.pkl`: HDBSCAN clustering model
-- `cluster_profiles.pkl`: DataFrame with cluster profiles
+## Setup
 
-## Model Loading
+1. Make sure you have the trained models in the `models/` directory:
+   - `hdbscan_clusterer.pkl` - The trained HDBSCAN model
+   - `pca_model.pkl` - The trained PCA model
+   - `preprocessing_pipeline.pkl` - The preprocessing pipeline
+   - `cluster_profiles.pkl` - (Optional) Dataframe with cluster profiles
 
-These models are loaded at API startup and used for contract clustering predictions.
-If you need to update these models, replace the files and restart the API service.
-
-## Model Format
-
-All models should be saved using pickle format with protocol 4 or higher.
+2. Install dependencies:
