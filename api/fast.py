@@ -4,149 +4,137 @@ import pickle
 import hdbscan
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
-# Import from local modules
-from api.preprocessing import preprocess_input
-from api.prediction import find_similar_clusters
-from decp.params import PCA_PATH, HDBSCAN_PATH, PROFILES_PATH
+# Import the model loader
+from api.model_loader import load_models
 
 # Initialize FastAPI
 app = FastAPI(
-    title="Procurement Clustering API",
-    description="API for clustering public procurement contracts",
+    title="DECP Clustering API",
+    description="API Lanterne publique : etudes des marchés publics",
     version="1.0.0"
 )
 
-# Global variables to store loaded models
-pca_model = None
-hdbscan_model = None
-cluster_profiles = None
+# Load models at startup
+pca_model, hdbscan_model, preprocessing_pipeline, cluster_profiles = load_models()
 
 # Input data model
-class ContractData(BaseModel):
-    """Contract data for prediction"""
+class Contract(BaseModel):
+    """Model for contract data input"""
     montant: float
-    dureeMois: float
-    offresRecues: Optional[int] = 1
+    dureeMois: int
+    offresRecues: int
     procedure: str
     nature: str
-    formePrix: Optional[str] = "FORFAIT"
-    codeCPV: Optional[str] = None
-
-# Response data model
-class ClusterResponse(BaseModel):
-    """Response with cluster prediction details"""
-    cluster_id: int
-    probability: float
-    similar_clusters: List[Dict[str, Any]]
-    cluster_profile: Dict[str, Any]
-
-def get_models():
-    """Dependency to ensure models are loaded"""
-    if pca_model is None or hdbscan_model is None or cluster_profiles is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Models not loaded. Please try again later."
-        )
-    return pca_model, hdbscan_model, cluster_profiles
-
-@app.on_event("startup")
-async def load_models():
-    """Load pre-trained models on startup"""
-    global pca_model, hdbscan_model, cluster_profiles
-
-    try:
-        print(f"Loading PCA model from {PCA_PATH}")
-        with open(PCA_PATH, "rb") as f:
-            pca_model = pickle.load(f)
-
-        print(f"Loading HDBSCAN model from {HDBSCAN_PATH}")
-        with open(HDBSCAN_PATH, "rb") as f:
-            hdbscan_model = pickle.load(f)
-
-        print(f"Loading cluster profiles from {PROFILES_PATH}")
-        with open(PROFILES_PATH, "rb") as f:
-            cluster_profiles = pickle.load(f)
-
-        print("All models loaded successfully")
-
-    except Exception as e:
-        print(f"Error loading models: {e}")
-        # Allow startup without models, will return error during requests
+    formePrix: str
+    ccag: Optional[str] = "Pas de CCAG"
+    sousTraitanceDeclaree: Optional[float] = 0.0
+    origineFrance: Optional[float] = 0.0
+    marcheInnovant: Optional[float] = 0.0
+    idAccordCadre: Optional[str] = None
+    typeGroupementOperateurs: Optional[str] = None
+    tauxAvance: Optional[float] = 0.0
+    codeCPV_2_3: Optional[int] = None
 
 @app.get("/")
 def read_root():
-    """Root endpoint to check if API is running"""
-    return {
-        "status": "ok",
-        "message": "Procurement Clustering API is running",
-        "models_loaded": {
-            "pca": pca_model is not None,
-            "hdbscan": hdbscan_model is not None,
-            "profiles": cluster_profiles is not None
-        }
-    }
-
-@app.get("/api/health")
-def health_check():
-    """Health check endpoint"""
-    if pca_model is None or hdbscan_model is None or cluster_profiles is None:
-        return {"status": "error", "message": "Models not loaded"}
-    return {"status": "ok", "models_loaded": True}
+    """Root endpoint"""
+    return {"status": "ok", "message": "DECP Clustering API is running"}
 
 @app.get("/api/clusters")
-def get_clusters(models=Depends(get_models)):
-    """Get available clusters and their profiles"""
-    _, _, profiles = models
+def get_clusters():
+    """Get all cluster profiles"""
+    if cluster_profiles is None or len(cluster_profiles) == 0:
+        raise HTTPException(status_code=404, detail="No cluster profiles available")
 
     return {
-        "num_clusters": len(profiles),
-        "clusters": profiles.to_dict(orient="records")
+        "num_clusters": len(cluster_profiles),
+        "clusters": cluster_profiles.to_dict(orient="records")
     }
 
-@app.post("/api/predict", response_model=ClusterResponse)
-def predict_cluster(contract: ContractData, models=Depends(get_models)):
-    """Predict cluster for new contract data"""
-    pca, hdbscan_model, profiles = models
+@app.post("/api/predict")
+def predict_cluster(contract: Contract):
+    """
+    Predict the cluster for a new contract
+
+    Returns cluster ID, probability, and similar clusters
+    """
+    # Check if models are loaded
+    if pca_model is None or hdbscan_model is None or preprocessing_pipeline is None:
+        raise HTTPException(status_code=500, detail="Models not loaded")
+
+    # Convert contract to DataFrame for preprocessing
+    contract_df = pd.DataFrame([contract.dict()])
+
+    # Add tauxAvance column from tauxAvance_cat if needed
+    # (e.g., convert "5%" to 5.0, "0%" to 0.0, etc.)
+    if 'tauxAvance_cat' in contract_df.columns and 'tauxAvance' not in contract_df.columns:
+        # Map standard values or use a default of 0
+        tax_map = {"0%": 0.0, "5%": 5.0, "10%": 10.0, "15%": 15.0, "20%": 20.0, "25%": 25.0, "30%": 30.0}
+
+        def map_taux(val):
+            if pd.isna(val):
+                return 0.0
+            return tax_map.get(val, 0.0)
+
+        contract_df['tauxAvance'] = contract_df['tauxAvance_cat'].apply(map_taux)
 
     try:
-        # Process input data
-        features = preprocess_input(contract)
+        # Preprocess the input
+        contract_preprocessed = preprocessing_pipeline.transform(contract_df)
 
-        # Transform with PCA
-        pca_features = pca.transform(features.reshape(1, -1))
+        # Apply PCA
+        contract_pca = pca_model.transform(contract_preprocessed)
 
-        # Predict with HDBSCAN
-        cluster_labels, probabilities = hdbscan.approximate_predict(hdbscan_model, pca_features)
-        cluster_id = int(cluster_labels[0])
-        probability = float(probabilities[0])
+        # Predict cluster
+        cluster_id, probability = hdbscan.approximate_predict(hdbscan_model, contract_pca)
+        predicted_cluster = int(cluster_id[0])
+        prob = float(probability[0])
 
-        # If assigned to noise, find nearest cluster
-        if cluster_id == -1:
-            distances = [np.min(np.linalg.norm(pca_features - hdbscan_model.exemplars_[c], axis=1))
-                       for c in range(len(hdbscan_model.exemplars_))]
-            cluster_id = int(np.argmin(distances))
-            probability = 0.0
+        # Handle noise assignment
+        if predicted_cluster == -1:
+            # Find nearest cluster
+            distances = [np.min(np.linalg.norm(contract_pca - hdbscan_model.exemplars_[c], axis=1))
+                        for c in range(len(hdbscan_model.exemplars_))]
+            nearest_cluster = int(np.argmin(distances))
 
-        # Get cluster profile
-        profile = profiles[profiles['cluster_id'] == cluster_id].to_dict(orient="records")
+            response = {
+                "cluster_id": -1,
+                "nearest_cluster": nearest_cluster,
+                "probability": 0.0,
+                "is_noise": True
+            }
+        else:
+            # Get cluster profile
+            cluster_profile = cluster_profiles[cluster_profiles['cluster_id'] == predicted_cluster]
 
-        # Find similar clusters
-        similar = find_similar_clusters(contract.dict(), profiles, top_n=3)
+            # Find similar clusters (same top CPV code)
+            if len(cluster_profile) > 0 and 'top_cpv' in cluster_profile.columns:
+                top_cpv = cluster_profile.iloc[0]['top_cpv']
+                similar_clusters = cluster_profiles[cluster_profiles['top_cpv'] == top_cpv]
+                similar_clusters = similar_clusters[similar_clusters['cluster_id'] != predicted_cluster]
+            else:
+                similar_clusters = pd.DataFrame()
 
-        return {
-            "cluster_id": cluster_id,
-            "probability": probability,
-            "similar_clusters": similar,
-            "cluster_profile": profile[0] if profile else {}
-        }
+            response = {
+                "cluster_id": predicted_cluster,
+                "probability": prob,
+                "is_noise": False,
+                "cluster_profile": cluster_profile.to_dict(orient="records")[0] if len(cluster_profile) > 0 else {},
+                "similar_clusters": similar_clusters.to_dict(orient="records")
+            }
+
+        return response
 
     except Exception as e:
+        import traceback
+        print(f"Error during prediction: {str(e)}")
+        print(traceback.format_exc())  # Print the full traceback
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api.fast:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
