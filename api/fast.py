@@ -316,7 +316,7 @@ class AmountRequest(BaseModel):
     sousTraitanceDeclaree: Optional[float] = 0.0
     origineFrance: Optional[float] = 0.0
     marcheInnovant: Optional[float] = 0.0
-    idAccordCadre: Optional[int] = 0
+    idAccordCadre: Optional[str] = None
     typeGroupementOperateurs: Optional[str] = None
     tauxAvance: Optional[float] = 0.0
     codeCPV_3: Optional[int] = None
@@ -376,9 +376,8 @@ def predict_amount(request: AmountRequest):
         # Convert numeric columns to float64 to match training data dtype
         numeric_cols = [
             'dureeMois', 'offresRecues', 'annee', 'sousTraitanceDeclaree',
-            'origineFrance', 'marcheInnovant', 'tauxAvance', 'codeCPV_3',
-            'idAccordCadre'
-        ]
+            'origineFrance', 'marcheInnovant', 'tauxAvance', 'codeCPV_3'
+                ]
         for col in numeric_cols:
             if col in X.columns:
                 X[col] = X[col].astype('float64')
