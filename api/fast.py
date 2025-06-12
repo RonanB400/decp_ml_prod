@@ -732,6 +732,7 @@ def predict_amount(request: AmountRequest):
             'dureeMois', 'offresRecues', 'annee', 'sousTraitanceDeclaree',
             'origineFrance', 'marcheInnovant', 'tauxAvance', 'codeCPV_3'
         ]
+
         for col in numeric_cols:
             if col in X.columns:
                 X[col] = X[col].astype('float64')
