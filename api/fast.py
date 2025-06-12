@@ -41,33 +41,124 @@ except Exception as e:
     rag_system = None
 
 
-# Load CPV descriptions
+# Load CPV descriptions with enhanced debugging
 cpv_descriptions = {}
 try:
+    # Try both relative and absolute paths
     cpv_desc_path = "models/cpv_descriptions.csv"
+    alt_path = os.path.join(os.path.dirname(__file__), "..", "models/cpv_descriptions.csv")
+
     if os.path.exists(cpv_desc_path):
+        print(f"Loading CPV descriptions from {cpv_desc_path}")
         cpv_df = pd.read_csv(cpv_desc_path)
-        cpv_descriptions = dict(zip(cpv_df["codeCPV_2"].astype(int), cpv_df["codeCPV_FR"]))
-        print(f"Loaded {len(cpv_descriptions)} CPV descriptions")
+    elif os.path.exists(alt_path):
+        print(f"Loading CPV descriptions from alternate path {alt_path}")
+        cpv_df = pd.read_csv(alt_path)
     else:
-        print(f"CPV descriptions file not found: {cpv_desc_path}")
+        print(f"CPV descriptions file not found at {cpv_desc_path} or {alt_path}")
+        raise FileNotFoundError(f"CPV file not found at either path")
+
+    # Print the first few rows to verify content
+    print(f"CSV first 3 rows: \n{cpv_df.head(3)}")
+
+    # Ensure the column name matches what's in your CSV file
+    cpv_columns = list(cpv_df.columns)
+    print(f"Found CPV columns: {cpv_columns}")
+
+    # Get the code column and description column
+    code_col = cpv_columns[0]  # First column (codeCPV_2)
+    desc_col = cpv_columns[1]  # Second column (codeCPV_FR)
+
+    # Create string version of the dictionary for debug
+    str_dict = {str(row[code_col]): row[desc_col] for _, row in cpv_df.iterrows()}
+    print(f"Loaded {len(str_dict)} CPV string descriptions")
+
+    # Convert all CPV codes to integers for consistent lookup
+    cpv_df[code_col] = cpv_df[code_col].astype(int)
+
+    # Create a dictionary with CPV codes as keys and descriptions as values
+    # Use both string and integer versions to ensure matches
+    cpv_descriptions = dict(zip(cpv_df[code_col], cpv_df[desc_col]))
+
+    # Also create string versions of keys for fallback
+    for key, value in cpv_descriptions.items():
+        str_dict[str(key)] = value
+
+    print(f"Loaded {len(cpv_descriptions)} CPV integer descriptions")
+
+    # Specific check for 45200000
+    test_code = 45200000
+    test_code_str = "45200000"
+    print(f"45200000 in integer dict? {test_code in cpv_descriptions}")
+    print(f"'45200000' in string dict? {test_code_str in str_dict}")
+
+    if test_code in cpv_descriptions:
+        print(f"CPV 45200000 description: {cpv_descriptions[test_code]}")
+    elif test_code_str in str_dict:
+        print(f"CPV '45200000' description (string key): {str_dict[test_code_str]}")
+        # Copy to integer dict for future lookups
+        cpv_descriptions[test_code] = str_dict[test_code_str]
+    else:
+        print("CPV 45200000 not found in any dictionary")
+        # Print nearby keys to debug
+        all_keys = sorted([int(k) for k in cpv_descriptions.keys()])
+        idx = -1
+        for i, k in enumerate(all_keys):
+            if k > test_code:
+                idx = max(0, i-1)
+                break
+        print(f"Nearby keys: {all_keys[max(0,idx-3):min(len(all_keys),idx+3)]}")
+
 except Exception as e:
     print(f"Error loading CPV descriptions: {str(e)}")
+    import traceback
+    print(traceback.format_exc())
 
 def get_cpv_description(cpv_code):
-    """Get human-readable French description for a CPV code"""
+    """
+    Get human-readable French description for a CPV code with enhanced robustness.
+    """
     try:
-        # Extract first two digits for category
         if cpv_code is None:
             return "Catégorie inconnue"
 
-        category_code = int(str(cpv_code)[:2])
+        # Print debug info for problematic CPV codes
+        if cpv_code == 45200000:
+            print(f"Looking up problematic CPV 45200000")
+            print(f"Type: {type(cpv_code)}")
+            print(f"In dictionary? {cpv_code in cpv_descriptions}")
 
-        if category_code in cpv_descriptions:
-            return cpv_descriptions[category_code]
-        else:
-            return f"Services avec code CPV {cpv_code}"
-    except (ValueError, TypeError):
+        # Try integer lookup first
+        if isinstance(cpv_code, (int, float)):
+            cpv_int = int(cpv_code)
+            if cpv_int in cpv_descriptions:
+                return cpv_descriptions[cpv_int]
+
+        # Try string conversion
+        cpv_str = str(cpv_code).replace('-', '').strip()
+        cpv_int = int(cpv_str)
+
+        # Try direct lookup with the integer
+        if cpv_int in cpv_descriptions:
+            return cpv_descriptions[cpv_int]
+
+        # Special case for known problematic codes
+        if cpv_int == 45200000:
+            return "Travaux de construction complète ou partielle et travaux de génie civil"
+
+        # Try prefix matching (hierarchical approach)
+        for length in range(len(cpv_str), 1, -2):
+            try:
+                prefix = int(cpv_str[:length])
+                if prefix in cpv_descriptions:
+                    return cpv_descriptions[prefix]
+            except:
+                pass
+
+        # Return generic description as last resort
+        return f"Services avec code CPV {cpv_code}"
+    except Exception as e:
+        print(f"Error in get_cpv_description for {cpv_code}: {str(e)}")
         return "Catégorie inconnue"
 
 # Input data model
@@ -159,10 +250,10 @@ def get_cluster_insights(n: int = 10):
 
         # Create a human-readable description
         description = (
-            f"Le cluster {int(cluster['cluster_id'])} représente {size} marchés "
-            f"principalement pour '{cpv_description}' ({cpv_percentage} des marchés). "
-            f"Les contrats types ont une valeur médiane de {median_amount} "
-            f"et durent {median_duration} mois. "
+            f"Le cluster {int(cluster['cluster_id'])} comprend {size} autres contrats "
+            f"principalement pour '{cpv_description}' ({cpv_percentage} des marchés du cluster). "
+            f"Les contrats types de ce cluster ont une valeur médiane de {median_amount} "
+            f"et durent majoritairement {median_duration} mois. "
         )
 
         # Add information about contract procedure if available
@@ -205,7 +296,8 @@ def predict_cluster(contract: Contract):
     """
     Predict the cluster for a new contract
 
-    Returns cluster ID, probability, and similar clusters
+    Returns cluster ID, probability, similar clusters and a summary description
+    Along with examples of nearest observations
     """
     # Check if models are loaded
     if (pca_model is None or hdbscan_model is None or
@@ -259,11 +351,21 @@ def predict_cluster(contract: Contract):
             ]
             nearest_cluster = int(np.argmin(distances))
 
+            # Get nearest cluster profile
+            nearest_profile = cluster_profiles[
+                cluster_profiles['cluster_id'] == nearest_cluster
+            ]
+
+            # Generate description for nearest cluster
+            summary_description = generate_cluster_description(nearest_profile.iloc[0] if len(nearest_profile) > 0 else None,
+                                                              "Ce marché n'appartient clairement à aucun cluster, mais le plus proche est")
+
             response = {
                 "cluster_id": -1,
                 "nearest_cluster": nearest_cluster,
                 "probability": 0.0,
-                "is_noise": True
+                "is_noise": True,
+                "summary_description": summary_description
             }
             similar_clusters = []
         else:
@@ -271,6 +373,12 @@ def predict_cluster(contract: Contract):
             cluster_profile = cluster_profiles[
                 cluster_profiles['cluster_id'] == predicted_cluster
             ]
+
+            # Generate human-readable description
+            cluster_data = cluster_profile.iloc[0] if len(cluster_profile) > 0 else None
+            confidence_level = get_confidence_level(prob)
+            summary_description = generate_cluster_description(cluster_data,
+                                                             f"Ce marché appartient {confidence_level} au cluster")
 
             # Find similar clusters based on contract data
             similar_clusters = find_similar_clusters(
@@ -281,16 +389,199 @@ def predict_cluster(contract: Contract):
                 top_n=5  # Adjust number as needed
             )
 
+            # Add descriptions to similar clusters
+            for i, cluster in enumerate(similar_clusters):
+                cluster_id = cluster.get('cluster_id')
+                cluster_data = cluster_profiles[cluster_profiles['cluster_id'] == cluster_id].iloc[0] if len(cluster_profiles[cluster_profiles['cluster_id'] == cluster_id]) > 0 else None
+                similar_clusters[i]['description'] = generate_cluster_description(cluster_data, "Ce cluster représente")
+
             response = {
                 "cluster_id": predicted_cluster,
                 "probability": prob,
                 "is_noise": False,
+                "summary_description": summary_description,
                 "cluster_profile": (
                     cluster_profile.to_dict(orient="records")[0]
                     if len(cluster_profile) > 0 else {}
                 ),
                 "similar_clusters": similar_clusters
             }
+
+            # Find the nearest exemplars from the cluster
+            if predicted_cluster != -1:
+                # Get the exemplars for this cluster
+                cluster_exemplars = hdbscan_model.exemplars_[predicted_cluster]
+
+                # Calculate distances to all exemplars in this cluster
+                distances = np.linalg.norm(contract_pca - cluster_exemplars, axis=1)
+
+                # Get indices of the closest exemplars (top 5)
+                closest_indices = np.argsort(distances)[:5]
+
+                # Extract the nearest exemplars with more meaningful information
+                nearest_exemplars = []
+                for idx in closest_indices:
+                    # Get exemplar features
+                    exemplar = cluster_exemplars[idx]
+
+                    # Calculate similarity score (1 - normalized distance)
+                    distance = distances[idx]
+                    max_distance = np.max(distances) if np.max(distances) > 0 else 1
+                    similarity = 1 - (distance / max_distance)
+
+                    # Create a more meaningful description of this exemplar
+                    exemplar_info = {
+                        "similarity_score": float(similarity),
+                        "distance": float(distance)
+                    }
+
+                    # Add a human-readable interpretation of this exemplar
+                    # Each field describes a key characteristic of this example contract
+                    contract_characteristics = {
+                        "montant_relatif": "plus élevé" if exemplar[0] > 0 else "moins élevé",
+                        "durée_relative": "plus longue" if exemplar[1] > 0 else "plus courte",
+                        "offres_reçues": "nombreuses" if exemplar[2] > 0 else "peu nombreuses",
+                        "procédure": "appel d'offres" if exemplar[3] > 0 else "autre procédure",
+                        "forme_prix": "unitaire" if exemplar[6] > 0 else "autre forme"
+                    }
+
+                    # Describe this contract example in human terms
+                    description = (
+                        f"Cet exemple de contrat similaire a un montant {contract_characteristics['montant_relatif']} "
+                        f"que la moyenne, une durée {contract_characteristics['durée_relative']}, avec "
+                        f"des offres {contract_characteristics['offres_reçues']}. "
+                        f"Ce contrat a utilisé une procédure de type {contract_characteristics['procédure']} "
+                        f"et une forme de prix {contract_characteristics['forme_prix']}."
+                    )
+
+                    exemplar_info["description"] = description
+
+                    # Get cluster profile data for estimates
+                    if len(cluster_profile) > 0:
+                        median_amount = cluster_profile.iloc[0]['median_amount']
+                        amount_std = cluster_profile.iloc[0]['amount_std']
+                        median_duration = cluster_profile.iloc[0]['median_duration']
+                    else:
+                        # Fallback values if cluster profile is missing
+                        median_amount = 600000
+                        amount_std = 500000
+                        median_duration = 24
+
+                    # Add estimated values for key features
+                    feature_values = {}
+
+                    # Montant (Amount) - Using cluster statistics for better estimates
+                    # Higher positive values mean higher amounts
+                    if exemplar[0] > 2:  # Very high
+                        estimated_amount = median_amount + (amount_std * 1.5)
+                    elif exemplar[0] > 0:  # Moderately high
+                        estimated_amount = median_amount + (amount_std * 0.5)
+                    elif exemplar[0] > -1:  # Slightly below average
+                        estimated_amount = median_amount * 0.8
+                    else:  # Much below average
+                        estimated_amount = median_amount * 0.5
+
+                    feature_values["montant"] = f"{estimated_amount:,.2f}€"
+
+                    # Duration - Using cluster median duration as reference
+                    if exemplar[1] > 2:  # Very long
+                        estimated_duration = median_duration * 1.5
+                    elif exemplar[1] > 0:  # Above average
+                        estimated_duration = median_duration * 1.2
+                    elif exemplar[1] > -1:  # Slightly below average
+                        estimated_duration = median_duration * 0.8
+                    else:  # Much shorter
+                        estimated_duration = median_duration * 0.5
+
+                    feature_values["dureeMois"] = f"{estimated_duration:.1f} mois"
+
+                    # Offers received - Estimate number of offers
+                    if exemplar[2] > 1:
+                        estimated_offers = "10+"
+                    elif exemplar[2] > 0:
+                        estimated_offers = "5-9"
+                    elif exemplar[2] > -1:
+                        estimated_offers = "2-4"
+                    else:
+                        estimated_offers = "1"
+
+                    feature_values["offresRecues"] = estimated_offers
+
+                    # Procedure type
+                    if exemplar[3] > 0:
+                        feature_values["procedure"] = "Appel d'offres ouvert"
+                    else:
+                        feature_values["procedure"] = "Procédure adaptée"
+
+                    # Contract nature (typically binary)
+                    if exemplar[4] > 0:
+                        feature_values["nature"] = "Marché"
+                    else:
+                        feature_values["nature"] = "Accord-cadre"
+
+                    # Price form
+                    if exemplar[6] > 0:
+                        feature_values["formePrix"] = "Unitaire"
+                    else:
+                        feature_values["formePrix"] = "Forfaitaire"
+
+                    # Add CPV information based on cluster characteristics
+                    # Since exemplars don't directly contain CPV codes, we'll estimate based on the cluster's dominant CPV
+                    if len(cluster_profile) > 0 and 'top_cpv' in cluster_profile.iloc[0]:
+                        # Get the top CPV code for this cluster
+                        cluster_top_cpv = cluster_profile.iloc[0]['top_cpv']
+
+                        # Get other CPV codes from the cluster profile if available
+                        if 'second_cpv' in cluster_profile.iloc[0] and 'third_cpv' in cluster_profile.iloc[0]:
+                            potential_cpvs = [
+                                cluster_profile.iloc[0]['top_cpv'],
+                                cluster_profile.iloc[0]['second_cpv'],
+                                cluster_profile.iloc[0]['third_cpv']
+                            ]
+                            # Select CPV based on similarity (closer exemplars more likely to have the dominant CPV)
+                            cpv_index = min(int(similarity * 2), 2)  # Higher similarity = more likely to have top CPV
+                            estimated_cpv = potential_cpvs[cpv_index]
+                        else:
+                            estimated_cpv = cluster_top_cpv
+
+                        # Get CPV description
+                        cpv_description = get_cpv_description(estimated_cpv)
+
+                        # Ensure CPV code is formatted as a string without decimal part
+                        if isinstance(estimated_cpv, (int, float)):
+                            feature_values["codeCPV"] = str(int(estimated_cpv))  # Convert to int first to remove decimal
+                        else:
+                            feature_values["codeCPV"] = str(estimated_cpv).split('.')[0]  # Remove decimal part if string
+
+                        feature_values["cpv_description"] = cpv_description
+
+                    # Add CCAG (General Administrative Terms) if we can estimate it
+                    # This is typically related to the type of work (construction, IT, etc.)
+                    if 'top_cpv' in cluster_profile.iloc[0]:
+                        cpv_prefix = str(cluster_profile.iloc[0]['top_cpv'])[:2]
+
+                        # Map CPV prefix to likely CCAG
+                        ccag_map = {
+                            "45": "Travaux",  # Construction work
+                            "48": "TIC",      # IT services
+                            "71": "PI",       # Engineering services
+                            "79": "PI",       # Business services
+                            "90": "FCS",      # Environmental services
+                            "50": "FCS",      # Repair services
+                            "60": "FCS"       # Transport services
+                        }
+
+                        feature_values["ccag"] = ccag_map.get(cpv_prefix, "Autre")
+
+                    exemplar_info["feature_values"] = feature_values
+
+                    # Only include the raw features for developer/debug purposes
+                    exemplar_info["features"] = exemplar.tolist()
+
+                    nearest_exemplars.append(exemplar_info)
+
+                # Add to response
+                response["nearest_examples"] = nearest_exemplars
 
         return response
 
@@ -302,6 +593,69 @@ def predict_cluster(contract: Contract):
             status_code=500,
             detail=f"Prediction error: {str(e)}"
         )
+
+def get_confidence_level(probability):
+    """Return a confidence level based on probability"""
+    if probability >= 0.9:
+        return "avec une très forte probabilité"
+    elif probability >= 0.7:
+        return "avec une forte probabilité"
+    elif probability >= 0.5:
+        return "probablement"
+    else:
+        return "possiblement"
+
+def generate_cluster_description(cluster_data, prefix_text="Ce cluster représente"):
+    """Generate a human-readable description for a cluster"""
+    if cluster_data is None:
+        return "Information de cluster non disponible."
+
+    # Format large numbers with commas
+    size = f"{int(cluster_data.get('size', 0)):,}"
+    median_amount = f"{cluster_data.get('median_amount', 0):,.2f}€"
+    median_duration = f"{cluster_data.get('median_duration', 0):.1f}"
+
+    # Get CPV category description
+    cpv_code = cluster_data.get('top_cpv')
+    cpv_description = get_cpv_description(cpv_code)
+
+    # Fix percentage calculation - ensure it's a decimal value between 0-1
+    # Then convert to percentage for display
+    top_cpv_pct = cluster_data.get('top_cpv_pct', 0)
+    # If percentage is greater than 1, assume it's already in percentage form and divide by 100
+    if top_cpv_pct > 1:
+        top_cpv_pct = top_cpv_pct / 100
+    cpv_percentage = f"{top_cpv_pct * 100:.1f}%"
+
+    # Create a human-readable description
+    description = (
+        f"{prefix_text} {int(cluster_data.get('cluster_id', 0))} qui comprend {size} autres contrats "
+        f"principalement pour '{cpv_description}' ({cpv_percentage} des marchés). "
+        f"Les contrats types ont une valeur médiane de {median_amount} "
+        f"et durent majoritairement {median_duration} mois. "
+    )
+
+    # Add information about contract procedure if available
+    if 'top_procedure' in cluster_data and 'top_procedure_pct' in cluster_data:
+        procedure = cluster_data.get('top_procedure', '')
+        proc_pct_value = cluster_data.get('top_procedure_pct', 0)
+        # Fix percentage calculation for procedure
+        if proc_pct_value > 1:
+            proc_pct_value = proc_pct_value / 100
+        proc_pct = f"{proc_pct_value * 100:.1f}%"
+        description += f"La plupart des marchés ({proc_pct}) utilisent la procédure '{procedure}'. "
+
+    # Add information about price structure if available
+    if 'top_forme_prix' in cluster_data and 'top_forme_prix_pct' in cluster_data:
+        price_form = cluster_data.get('top_forme_prix', '')
+        price_pct_value = cluster_data.get('top_forme_prix_pct', 0)
+        # Fix percentage calculation for price form
+        if price_pct_value > 1:
+            price_pct_value = price_pct_value / 100
+        price_pct = f"{price_pct_value * 100:.1f}%"
+        description += f"{price_pct} utilisent le format de prix '{price_form}'. "
+
+    return description
 
 
 class AmountRequest(BaseModel):
@@ -338,11 +692,11 @@ def predict_amount(request: AmountRequest):
             status_code=500,
             detail="Amount models not loaded"
         )
-    
+
     try:
         # Convert request to DataFrame
         X = pd.DataFrame([request.dict()])
-        
+
         # Fix column naming and missing columns to match pipeline expectations
         # Add 'annee' column if missing (use the annee from request or current year)
         if 'annee' not in X.columns:
@@ -350,7 +704,7 @@ def predict_amount(request: AmountRequest):
                 request.annee if hasattr(request, 'annee') and request.annee
                 else datetime.datetime.now().year
             )
-        
+
         # Convert tauxAvance to tauxAvance_cat if needed
         if ('tauxAvance' in X.columns and
                 'tauxAvance_cat' not in X.columns):
@@ -370,18 +724,19 @@ def predict_amount(request: AmountRequest):
                     return "25%"
                 else:
                     return "30%"
-            
+
             X['tauxAvance_cat'] = X['tauxAvance'].apply(map_taux_to_cat)
-        
+
         # Convert numeric columns to float64 to match training data dtype
         numeric_cols = [
             'dureeMois', 'offresRecues', 'annee', 'sousTraitanceDeclaree',
             'origineFrance', 'marcheInnovant', 'tauxAvance', 'codeCPV_3'
-                ]
+        ]
+
         for col in numeric_cols:
             if col in X.columns:
                 X[col] = X[col].astype('float64')
-        
+
         y_pred = amount_prediction(X, amount_pipeline, amount_model)
         return {"prediction": y_pred.tolist()}
     except Exception as e:
@@ -397,22 +752,22 @@ def predict_amount(request: AmountRequest):
 def rag_query(question: RAGQuestion):
     """
     Query the RAG system with a natural language question
-    
+
     Returns the natural language answer
     """
     # Check if RAG system is loaded
     if rag_system is None:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="RAG system not initialized"
         )
-    
+
     try:
         # Query the RAG system - this returns just the answer string
         answer = rag_system.query(question.question)
-        
+
         return {"answer": answer}
-    
+
     except Exception as e:
         import traceback
         print(f"Error during RAG query: {str(e)}")
