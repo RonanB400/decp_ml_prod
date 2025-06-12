@@ -525,6 +525,54 @@ def predict_cluster(contract: Contract):
                     else:
                         feature_values["formePrix"] = "Forfaitaire"
 
+                    # Add CPV information based on cluster characteristics
+                    # Since exemplars don't directly contain CPV codes, we'll estimate based on the cluster's dominant CPV
+                    if len(cluster_profile) > 0 and 'top_cpv' in cluster_profile.iloc[0]:
+                        # Get the top CPV code for this cluster
+                        cluster_top_cpv = cluster_profile.iloc[0]['top_cpv']
+
+                        # Get other CPV codes from the cluster profile if available
+                        if 'second_cpv' in cluster_profile.iloc[0] and 'third_cpv' in cluster_profile.iloc[0]:
+                            potential_cpvs = [
+                                cluster_profile.iloc[0]['top_cpv'],
+                                cluster_profile.iloc[0]['second_cpv'],
+                                cluster_profile.iloc[0]['third_cpv']
+                            ]
+                            # Select CPV based on similarity (closer exemplars more likely to have the dominant CPV)
+                            cpv_index = min(int(similarity * 2), 2)  # Higher similarity = more likely to have top CPV
+                            estimated_cpv = potential_cpvs[cpv_index]
+                        else:
+                            estimated_cpv = cluster_top_cpv
+
+                        # Get CPV description
+                        cpv_description = get_cpv_description(estimated_cpv)
+
+                        # Ensure CPV code is formatted as a string without decimal part
+                        if isinstance(estimated_cpv, (int, float)):
+                            feature_values["codeCPV"] = str(int(estimated_cpv))  # Convert to int first to remove decimal
+                        else:
+                            feature_values["codeCPV"] = str(estimated_cpv).split('.')[0]  # Remove decimal part if string
+
+                        feature_values["cpv_description"] = cpv_description
+
+                    # Add CCAG (General Administrative Terms) if we can estimate it
+                    # This is typically related to the type of work (construction, IT, etc.)
+                    if 'top_cpv' in cluster_profile.iloc[0]:
+                        cpv_prefix = str(cluster_profile.iloc[0]['top_cpv'])[:2]
+
+                        # Map CPV prefix to likely CCAG
+                        ccag_map = {
+                            "45": "Travaux",  # Construction work
+                            "48": "TIC",      # IT services
+                            "71": "PI",       # Engineering services
+                            "79": "PI",       # Business services
+                            "90": "FCS",      # Environmental services
+                            "50": "FCS",      # Repair services
+                            "60": "FCS"       # Transport services
+                        }
+
+                        feature_values["ccag"] = ccag_map.get(cpv_prefix, "Autre")
+
                     exemplar_info["feature_values"] = feature_values
 
                     # Only include the raw features for developer/debug purposes
